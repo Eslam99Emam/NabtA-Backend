@@ -7,82 +7,110 @@ Original file is located at
     https://colab.research.google.com/drive/17lnFM5RnxdxGEjN4TMms8dvKr6SFJMJk
 """
 
-import ee
 import pandas as pd
-import numpy as np
 import math as math
+import numpy as np
+import requests
 
-# 1. Authenticate and Initialize Earth Engine
-# (Colab will prompt you to log in with your Google account)
-try:
-    ee.Initialize()
-except Exception as e:
-    ee.Authenticate()
-    ee.Initialize(project="nasa-agricultural-project")
+# import ee
 
-# 2. Define your Farm Region of Interest (ROI)
-# Example: A sample agricultural polygon in the Nile Delta/Cairo region
-farm_polygon = ee.Geometry.Polygon(
-    [[[31.20, 30.05], [31.25, 30.05], [31.25, 30.10], [31.20, 30.10]]]
-)
+# # 1. Authenticate and Initialize Earth Engine
+# # (Colab will prompt you to log in with your Google account)
+# try:
+#     ee.Initialize()
+# except Exception as e:
+#     ee.Authenticate()
+#     ee.Initialize(project="nasa-agricultural-project")
 
-# 3b. Load ERA5-Land Daily Aggregated Dataset
-era5_collection = (
-    ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR")
-    .filterBounds(farm_polygon)
-    .filterDate("2025-01-01", "2025-12-31")
-)
+# # 2. Define your Farm Region of Interest (ROI)
+# # Example: A sample agricultural polygon in the Nile Delta/Cairo region
+# farm_polygon = ee.Geometry.Polygon(
+#     [[[31.20, 30.05], [31.25, 30.05], [31.25, 30.10], [31.20, 30.10]]]
+# )
 
-
-# 3c. Extract spatial mean metrics from ERA5-Land inside the polygon safely
-def extract_mean_era5(image):
-    # Explicitly select bands to ensure they exist in the reduction
-    selected = image.select(["temperature_2m", "total_precipitation_sum"])
-    stats = selected.reduceRegion(
-        reducer=ee.Reducer.mean(),
-        geometry=farm_polygon,
-        scale=11132,  # ERA5-Land has roughly 11km (0.1 degree) resolution
-        maxPixels=1e9,
-    )
-    date = ee.Date(image.get("system:time_start")).format("YYYY-MM-dd")
-    return ee.Feature(
-        None,
-        {
-            "date": date,
-            "temperature_2m": stats.get("temperature_2m"),
-            "total_precipitation_sum": stats.get("total_precipitation_sum"),
-        },
-    )
+# # 3b. Load ERA5-Land Daily Aggregated Dataset
+# era5_collection = (
+#     ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR")
+#     .filterBounds(farm_polygon)
+#     .filterDate("2025-01-01", "2025-12-31")
+# )
 
 
-# Map over the collection
-era5_time_series_features = era5_collection.map(extract_mean_era5)
+# # 3c. Extract spatial mean metrics from ERA5-Land inside the polygon safely
+# def extract_mean_era5(image):
+#     # Explicitly select bands to ensure they exist in the reduction
+#     selected = image.select(["temperature_2m", "total_precipitation_sum"])
+#     stats = selected.reduceRegion(
+#         reducer=ee.Reducer.mean(),
+#         geometry=farm_polygon,
+#         scale=11132,  # ERA5-Land has roughly 11km (0.1 degree) resolution
+#         maxPixels=1e9,
+#     )
+#     date = ee.Date(image.get("system:time_start")).format("YYYY-MM-dd")
+#     return ee.Feature(
+#         None,
+#         {
+#             "date": date,
+#             "temperature_2m": stats.get("temperature_2m"),
+#             "total_precipitation_sum": stats.get("total_precipitation_sum"),
+#         },
+#     )
 
-# Bring the lightweight tabular ERA5-Land summary into Colab as a Pandas DataFrame
-era5_features_list = era5_time_series_features.getInfo()["features"]
 
-era5_data = []
-for f in era5_features_list:
-    props = f["properties"]
-    era5_data.append(
-        {
-            "date": props.get("date"),
-            "farm_field": "field_no_0001",
-            "temperature_2m_k": props.get("temperature_2m"),
-            "total_precipitation_m": props.get("total_precipitation_sum"),
-        }
-    )
+# # Map over the collection
+# era5_time_series_features = era5_collection.map(extract_mean_era5)
 
-df_era5 = pd.DataFrame(era5_data)
+# # Bring the lightweight tabular ERA5-Land summary into Colab as a Pandas DataFrame
+# era5_features_list = era5_time_series_features.getInfo()["features"]
 
-df_era5["temperature_2m_c"] = df_era5["temperature_2m_k"] - 273.15
-df_era5["total_precipitation_mm"] = df_era5["total_precipitation_m"] * 1000
-df_era5["date"] = pd.to_datetime(df_era5["date"])
-temp_monthly = (
-    df_era5.groupby(df_era5["date"].dt.to_period("M"))["temperature_2m_c"]
-    .mean()
-    .reset_index()
-)
+# era5_data = []
+# for f in era5_features_list:
+#     props = f["properties"]
+#     era5_data.append(
+#         {
+#             "date": props.get("date"),
+#             "farm_field": "field_no_0001",
+#             "temperature_2m_k": props.get("temperature_2m"),
+#             "total_precipitation_m": props.get("total_precipitation_sum"),
+#         }
+#     )
+
+# df_era5 = pd.DataFrame(era5_data)
+
+# df_era5["temperature_2m_c"] = df_era5["temperature_2m_k"] - 273.15
+# df_era5["total_precipitation_mm"] = df_era5["total_precipitation_m"] * 1000
+# df_era5["date"] = pd.to_datetime(df_era5["date"])
+# temp_monthly = (
+#     df_era5.groupby(df_era5["date"].dt.to_period("M"))["temperature_2m_c"]
+#     .mean()
+#     .reset_index()
+# 1. Define your Farm Location (Centroid of your polygon: [31.20-31.25, 30.05-30.10])
+lat = 30.075
+lon = 31.225
+year = 2025
+
+# 2. Fetch Monthly Mean Temperature (T2M) & Precipitation (PRECTOTCORR) from NASA POWER
+url = f"https://power.larc.nasa.gov/api/temporal/daily/point?start={year}0101&end={year}1231&latitude={lat}&longitude={lon}&community=ag&parameters=T2M&format=json&units=metric&header=false&time-standard=utc"
+
+response = requests.get(url)
+response.raise_for_status()
+data = response.json()
+# print(data)
+
+# 3. Extract T2M (already in Celsius—no need to subtract 273.15)
+t2m_dict = data["properties"]["parameter"]["T2M"]
+# print(t2m_dict)
+records = [
+    {
+        # Convert '202501' to pandas Period('2025-01', 'M') so .strftime("%Y-%m") works downstream
+        "date": f"{k[:4]}-{k[4:6]}",
+        "temperature_2m_c": v,
+    }
+    for k, v in t2m_dict.items()
+    if not k.endswith("13") and v != -999
+]
+
+temp_monthly = pd.DataFrame(records)
 
 
 def months_temp_rate(temps, topmn, topmx, tmin, tmax, months):
@@ -106,7 +134,7 @@ def months_temp_rate(temps, topmn, topmx, tmin, tmax, months):
         scores.append(score)
     # print(scores)
     for m, s in zip(months, scores):
-        result[m.strftime("%Y-%m")] = s
+        result[m] = s
     return result
 
 
